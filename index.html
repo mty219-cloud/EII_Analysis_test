@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>TML 부식 추세 분석기</title>
+<style>
+body{
+    background:#1e1f22;
+    color:#e8e8e8;
+    font-family:Segoe UI, sans-serif;
+    margin:0;
+}
+.container{
+    width:1200px;
+    margin:auto;
+    padding:20px;
+}
+h1{
+    color:#7fd6ff;
+}
+.panel{
+    background:#2a2d33;
+    padding:20px;
+    border-radius:10px;
+    margin-bottom:20px;
+}
+textarea,input{
+    width:100%;
+    background:#181a1f;
+    color:white;
+    border:1px solid #555;
+    border-radius:5px;
+    padding:10px;
+    box-sizing:border-box;
+}
+
+button{
+    background:#0082c8;
+    color:white;
+    border:none;
+    padding:12px 20px;
+    border-radius:5px;
+    cursor:pointer;
+    margin-top:10px;
+}
+
+button:hover{
+    background:#0a98e5;
+}
+
+table{
+    width:100%;
+    border-collapse:collapse;
+}
+
+th{
+    background:#0f4c75;
+}
+
+th,td{
+    border:1px solid #555;
+    padding:8px;
+    text-align:center;
+}
+
+canvas{
+    background:white;
+    border-radius:10px;
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<h1>TML 부식 추세 분석기</h1>
+
+<div class="panel">
+<h3>CSV 입력</h3>
+
+예시
+<pre>
+TML_ID,측정일,두께mm
+TML-001,2020-01-01,12.5
+TML-001,2022-01-01,12.1
+TML-001,2024-01-01,11.7
+TML-002,2020-01-01,8.9
+TML-002,2022-01-01,8.6
+TML-002,2024-01-01,8.2
+</pre>
+
+<textarea id="csvInput" rows="12"></textarea>
+
+<br><br>
+
+최소 요구 두께(mm)
+
+<input type="number" id="minThickness" value="10">
+
+<button onclick="analyze()">분석 실행</button>
+
+</div>
+
+<div class="panel">
+<h2>분석 결과</h2>
+
+<table>
+<thead>
+<tr>
+<th>TML</th>
+<th>연 부식속도(mm/년)</th>
+<th>현재 두께(mm)</th>
+<th>최소요구두께 도달 예상 연도</th>
+<th>남은 기간(년)</th>
+</tr>
+</thead>
+<tbody id="resultTable"></tbody>
+</table>
+</div>
+
+<div class="panel">
+<h2>측정점 + 추세선</h2>
+<select id="tmlSelect"></select>
+<canvas id="chart" width="1000" height="500"></canvas>
+</div>
+
+</div>
+
+<script>
+
+let resultData={};
+
+function analyze(){
+
+    let csv=document.getElementById("csvInput").value.trim();
+
+    let minThickness=parseFloat(document.getElementById("minThickness").value);
+
+    let rows=csv.split("\n").slice(1);
+
+    let data={};
+
+    rows.forEach(r=>{
+
+        let [id,date,thickness]=r.split(",");
+
+        if(!data[id]) data[id]=[];
+
+        data[id].push({
+            date:new Date(date),
+            thickness:parseFloat(thickness)
+        });
+
+    });
+
+    let results=[];
+
+    for(let id in data){
+
+        let arr=data[id].sort((a,b)=>a.date-b.date);
+
+        let x=arr.map(v=>v.date.getFullYear());
+        let y=arr.map(v=>v.thickness);
+
+        let xAvg=x.reduce((a,b)=>a+b)/x.length;
+        let yAvg=y.reduce((a,b)=>a+b)/y.length;
+
+        let numerator=0;
+        let denominator=0;
+
+        for(let i=0;i<x.length;i++){
+            numerator+=(x[i]-xAvg)*(y[i]-yAvg);
+            denominator+=(x[i]-xAvg)*(x[i]-xAvg);
+        }
+
+        let slope=numerator/denominator; // mm/year
+
+        let intercept=yAvg-slope*xAvg;
+
+        let currentThickness=y[y.length-1];
+
+        let predictYear=(minThickness-intercept)/slope;
+
+        let remain=predictYear-(new Date().getFullYear());
+
+        results.push({
+            id,
+            corrosionRate:(-slope).toFixed(3),
+            currentThickness:currentThickness.toFixed(2),
+            predictYear: slope<0 ? predictYear.toFixed(1):"계산불가",
+            remain: slope<0 ? remain.toFixed(1):"-",
+            points:arr,
+            slope,
+            intercept
+        });
+
+    }
+
+    results.sort((a,b)=>parseFloat(a.remain)-parseFloat(b.remain));
+
+    let tbody=document.getElementById("resultTable");
+    tbody.innerHTML="";
+
+    results.forEach(r=>{
+
+        tbody.innerHTML+=`
+        <tr>
+        <td>${r.id}</td>
+        <td>${r.corrosionRate}</td>
+        <td>${r.currentThickness}</td>
+        <td>${r.predictYear}</td>
+        <td>${r.remain}</td>
+        </tr>
+        `;
+
+        resultData[r.id]=r;
+
+    });
+
+    let select=document.getElementById("tmlSelect");
+
+    select.innerHTML="";
+
+    results.forEach(r=>{
+
+        let option=document.createElement("option");
+        option.value=r.id;
+        option.text=r.id;
+        select.appendChild(option);
+
+    });
+
+    drawChart(select.value);
+
+    select.onchange=()=>{
+        drawChart(select.value);
+    };
+
+}
+
+function drawChart(id){
+
+    let obj=resultData[id];
+
+    let canvas=document.getElementById("chart");
+    let ctx=canvas.getContext("2d");
+
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    let points=obj.points;
+
+    let years=points.map(v=>v.date.getFullYear());
+
+    let values=points.map(v=>v.thickness);
+
+    let minYear=Math.min(...years);
+    let maxYear=Math.max(...years)+10;
+
+    let trend=[];
+
+    for(let y=minYear;y<=maxYear;y++){
+        trend.push({
+            year:y,
+            value:obj.slope*y+obj.intercept
+        });
+    }
+
+    let allValues=values.concat(trend.map(v=>v.value));
+
+    let minV=Math.min(...allValues)-0.5;
+    let maxV=Math.max(...allValues)+0.5;
+
+    function xScale(year){
+        return 80+(year-minYear)/(maxYear-minYear)*850;
+    }
+
+    function yScale(v){
+        return 450-(v-minV)/(maxV-minV)*350;
+    }
+
+    // 축
+    ctx.strokeStyle="black";
+    ctx.beginPath();
+    ctx.moveTo(70,50);
+    ctx.lineTo(70,450);
+    ctx.lineTo(950,450);
+    ctx.stroke();
+
+    // 추세선
+    ctx.strokeStyle="red";
+    ctx.beginPath();
+
+    trend.forEach((p,i)=>{
+
+        let x=xScale(p.year);
+        let y=yScale(p.value);
+
+        if(i===0) ctx.moveTo(x,y);
+        else ctx.lineTo(x,y);
+
+    });
+
+    ctx.stroke();
+
+    // 측정점
+    ctx.fillStyle="blue";
+
+    points.forEach(p=>{
+
+        let x=xScale(p.date.getFullYear());
+        let y=yScale(p.thickness);
+
+        ctx.beginPath();
+        ctx.arc(x,y,5,0,Math.PI*2);
+        ctx.fill();
+
+    });
+
+    // x축 라벨
+    ctx.fillStyle="black";
+
+    for(let y=minYear;y<=maxYear;y+=2){
+
+        let x=xScale(y);
+
+        ctx.fillText(y,x-10,470);
+
+    }
+
+    ctx.fillText("빨간선 : 선형 추세",780,40);
+    ctx.fillStyle="blue";
+    ctx.fillText("파란점 : 측정값",780,60);
+
+}
+
+</script>
+
+</body>
+</html>
